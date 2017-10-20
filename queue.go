@@ -16,14 +16,14 @@ type GoQueue struct {
 	roptions *levigo.ReadOptions
 }
 
-func CreateQueue() (*GoQueue, error) {
+func CreateQueue(dbname string) (*GoQueue, error) {
 	options := levigo.NewOptions()
 	options.SetCreateIfMissing(true)
 
 	woptions := levigo.NewWriteOptions()
 	roptions := levigo.NewReadOptions()
 
-	db, err := levigo.Open("./db", options)
+	db, err := levigo.Open(dbname, options)
 	if err != nil {
 		return nil, err
 	}
@@ -32,11 +32,15 @@ func CreateQueue() (*GoQueue, error) {
 	var writePosition uint64 = 0
 
 	readBufs, err := db.Get(roptions, []byte("_readPosition"))
-	if err == nil && readBufs != nil {
+	if err != nil {
+		return nil, err
+	} else if readBufs != nil {
 		readPosition = binary.BigEndian.Uint64(readBufs)
 	}
 	writeBufs, err := db.Get(roptions, []byte("_writePosition"))
-	if err == nil && writeBufs != nil {
+	if err != nil {
+		return nil, err
+	} else if writeBufs != nil {
 		writePosition = binary.BigEndian.Uint64(writeBufs)
 	}
 
@@ -80,8 +84,13 @@ func (q *GoQueue) Pop() ([]byte, error) {
 	pos := make([]byte, 8)
 	binary.BigEndian.PutUint64(pos, q.readPosition)
 	value, err := q.db.Get(q.roptions, pos)
-	if err != nil {
+	if err != nil {	// error
 		return nil, err
+	}
+	if value != nil { // exists
+		if err = q.db.Delete(q.woptions, pos); err != nil {
+			return nil, err
+		}
 	}
 	binary.BigEndian.PutUint64(pos, q.readPosition + 1)
 	err = q.db.Put(q.woptions, []byte("_readPosition"), pos)
@@ -90,4 +99,13 @@ func (q *GoQueue) Pop() ([]byte, error) {
 	}
 	q.readPosition = q.readPosition + 1
 	return value, nil
+}
+
+func (q *GoQueue)DestroyQueue() {
+	q.db.Close()
+}
+
+func (q *GoQueue)Stats() string {
+	stats := q.db.PropertyValue("leveldb.stats")
+	return stats
 }
